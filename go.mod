@@ -7,6 +7,7 @@ require (
 	github.com/Azure/azure-sdk-for-go v62.3.0+incompatible
 	github.com/Azure/go-autorest/autorest v0.11.24 // indirect
 	github.com/Azure/go-autorest/autorest/to v0.4.0 // indirect
+	github.com/XiaoMi/go-fds v1.0.3
 	github.com/cenkalti/backoff/v4 v4.1.2
 	github.com/cespare/xxhash/v2 v2.1.2
 	github.com/dnaeon/go-vcr v1.2.0 // indirect

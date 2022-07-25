@@ -15,6 +15,7 @@ import (
 	"github.com/restic/restic/internal/backend"
 	"github.com/restic/restic/internal/backend/azure"
 	"github.com/restic/restic/internal/backend/b2"
+	"github.com/restic/restic/internal/backend/fds"
 	"github.com/restic/restic/internal/backend/gs"
 	"github.com/restic/restic/internal/backend/limiter"
 	"github.com/restic/restic/internal/backend/local"
@@ -573,6 +574,21 @@ func parseConfig(loc location.Location, opts options.Options) (interface{}, erro
 		debug.Log("opening s3 repository at %#v", cfg)
 		return cfg, nil
 
+	case "fds":
+		cfg := loc.Config.(fds.Config)
+		if cfg.FdsAccessKey == "" {
+			cfg.FdsAccessKey = os.Getenv("FDS_ACCESS_KEY")
+		}
+		if cfg.FdsSecretKey == "" {
+			cfg.FdsSecretKey = os.Getenv("FDS_SECRET_KEY")
+		}
+		if err := opts.Apply(loc.Scheme, &cfg); err != nil {
+			return nil, err
+		}
+
+		debug.Log("opening fds repository at %#v", cfg)
+		return cfg, nil
+
 	case "gs":
 		cfg := loc.Config.(gs.Config)
 		if cfg.ProjectID == "" {
@@ -698,6 +714,8 @@ func open(s string, gopts GlobalOptions, opts options.Options) (restic.Backend, 
 		be, err = sftp.Open(globalOptions.ctx, cfg.(sftp.Config))
 	case "s3":
 		be, err = s3.Open(globalOptions.ctx, cfg.(s3.Config), rt)
+	case "fds":
+		be, err = fds.Open(globalOptions.ctx, cfg.(fds.Config))
 	case "gs":
 		be, err = gs.Open(cfg.(gs.Config), rt)
 	case "azure":
@@ -727,7 +745,7 @@ func open(s string, gopts GlobalOptions, opts options.Options) (restic.Backend, 
 		}
 	}
 
-	if loc.Scheme == "local" || loc.Scheme == "sftp" {
+	if loc.Scheme == "local" || loc.Scheme == "sftp" || loc.Scheme == "fds" {
 		// wrap the backend in a LimitBackend so that the throughput is limited
 		be = limiter.LimitBackend(be, lim)
 	}
@@ -770,6 +788,8 @@ func create(s string, opts options.Options) (restic.Backend, error) {
 		return sftp.Create(globalOptions.ctx, cfg.(sftp.Config))
 	case "s3":
 		return s3.Create(globalOptions.ctx, cfg.(s3.Config), rt)
+	case "fds":
+		return fds.Create(globalOptions.ctx, cfg.(fds.Config))
 	case "gs":
 		return gs.Create(cfg.(gs.Config), rt)
 	case "azure":
