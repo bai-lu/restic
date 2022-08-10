@@ -2,6 +2,7 @@ package fds
 
 import (
 	"context"
+	"crypto/md5"
 	"fmt"
 	"hash"
 	"io"
@@ -219,7 +220,7 @@ func (be *Backend) Location() string {
 
 // Hasher may return a hash function for calculating a content hash for the backend
 func (be *Backend) Hasher() hash.Hash {
-	return nil
+	return md5.New()
 }
 
 // Path returns the path in the bucket that is used for this backend.
@@ -247,12 +248,15 @@ func (be *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindRe
 
 	debug.Log("PutObject(%v, %v, %v)", be.cfg.Bucket, objName, rd.Length())
 	request := &fds.PutObjectRequest{
-		BucketName:  be.cfg.Bucket,
-		ObjectName:  objName,
-		ContentType: "application/octet-stream",
-		Data:        rd,
+		BucketName:    be.cfg.Bucket,
+		ObjectName:    objName,
+		ContentType:   "application/octet-stream",
+		Data:          rd,
+		ContentMd5:    string(rd.Hash()),
+		ContentLength: int(rd.Length()),
 	}
 	resp, err := be.client.PutObjectWithContext(ctx, request)
+	// 检查err and resp.length
 
 	debug.Log("%v -> %v bytes, err %#v: %v", objName, err, err)
 	debug.Log("%v -> %v", objName, resp)
