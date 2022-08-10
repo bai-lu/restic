@@ -252,7 +252,7 @@ func (be *Backend) Save(ctx context.Context, h restic.Handle, rd restic.RewindRe
 		ObjectName:    objName,
 		ContentType:   "application/octet-stream",
 		Data:          rd,
-		ContentMd5:    string(rd.Hash()),
+		ContentMd5:    fmt.Sprintf("%x", rd.Hash()),
 		ContentLength: int(rd.Length()),
 	}
 	resp, err := be.client.PutObjectWithContext(ctx, request)
