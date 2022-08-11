@@ -8,6 +8,7 @@
   - for subsections
   ^ for subsubsections
   " for paragraphs
+
 ########################
 Tuning Backup Parameters
 ########################
@@ -46,4 +47,28 @@ For a repository using at least repository format version 2, you can configure h
 is compressed with the option ``--compression``. It can be set to ```auto``` (the default,
 which will compress very fast), ``max`` (which will trade backup speed and CPU usage for
 slightly better compression), or ``off`` (which disables compression). Each setting is
-only applied for the single run of restic.
+only applied for the single run of restic. The option can also be set via the environment
+variable ``RESTIC_COMPRESSION``.
+
+
+Pack Size
+=========
+
+In certain instances, such as very large repositories (in the TiB range) or very fast
+upload connections, it is desirable to use larger pack sizes to reduce the number of
+files in the repository and improve upload performance.  Notable examples are OpenStack
+Swift and some Google Drive Team accounts, where there are hard limits on the total
+number of files.  Larger pack sizes can also improve the backup speed for a repository
+stored on a local HDD.  This can be achieved by either using the ``--pack-size`` option
+or defining the ``$RESTIC_PACK_SIZE`` environment variable.  Restic currently defaults
+to a 16 MiB pack size.
+
+The side effect of increasing the pack size is requiring more disk space for temporary pack
+files created before uploading.  The space must be available in the system default temp
+directory, unless overwritten by setting the ``$TMPDIR`` environment variable.  In addition,
+depending on the backend the memory usage can also increase by a similar amount. Restic
+requires temporary space according to the pack size, multiplied by the number
+of backend connections plus one. For example, if the backend uses 5 connections (the default
+for most backends), with a target pack size of 64 MiB, you'll need a *minimum* of 384 MiB
+of space in the temp directory. A bit of tuning may be required to strike a balance between
+resource usage at the backup client and the number of pack files in the repository.
