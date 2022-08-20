@@ -97,6 +97,7 @@ func pathsFromSn(pathTemplate string, timeTemplate string, sn *restic.Snapshot) 
 				// needs special treatment: Rebuild the string builders
 				newout := make([]strings.Builder, len(out)*len(sn.Tags))
 				for i, tag := range sn.Tags {
+					tag = filenameFromTag(tag)
 					for j := range out {
 						newout[i*len(out)+j].WriteString(out[j].String() + tag)
 					}
@@ -137,6 +138,24 @@ func pathsFromSn(pathTemplate string, timeTemplate string, sn *restic.Snapshot) 
 	}
 
 	return paths, timeSuffix
+}
+
+// Some tags are problematic when used as filenames:
+//
+//	""
+//	".", ".."
+//	anything containing '/'
+//
+// Replace all special character by underscores "_", an empty tag is also represented as a underscore.
+func filenameFromTag(tag string) string {
+	switch tag {
+	case "", ".":
+		return "_"
+	case "..":
+		return "__"
+	}
+
+	return strings.ReplaceAll(tag, "/", "_")
 }
 
 // determine static path prefix
@@ -280,9 +299,8 @@ func (d *SnapshotsDirStructure) updateSnapshots(ctx context.Context) error {
 	// sort snapshots ascending by time (default order is descending)
 	sort.Sort(sort.Reverse(snapshots))
 
-	d.lastCheck = time.Now()
-
 	if d.snCount == len(snapshots) {
+		d.lastCheck = time.Now()
 		return nil
 	}
 
@@ -291,8 +309,8 @@ func (d *SnapshotsDirStructure) updateSnapshots(ctx context.Context) error {
 		return err
 	}
 
+	d.lastCheck = time.Now()
 	d.snCount = len(snapshots)
-
 	d.makeDirs(snapshots)
 	return nil
 }
