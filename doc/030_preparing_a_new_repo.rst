@@ -14,18 +14,26 @@
 Preparing a new repository
 ##########################
 
-The place where your backups will be saved is called a "repository".
+The place where your backups will be saved is called a "repository". This is
+simply a directory containing a set of subdirectories and files created by
+restic to store your backups, some corresponding metadata and encryption keys.
+
+To access the repository, a password (also called a key) must be specified. A
+repository can hold multiple keys that can all be used to access the repository.
+
 This chapter explains how to create ("init") such a repository. The repository
 can be stored locally, or on some remote server or service. We'll first cover
 using a local repository; the remaining sections of this chapter cover all the
 other options. You can skip to the next chapter once you've read the relevant
 section here.
 
-For automated backups, restic accepts the repository location in the
+For automated backups, restic supports specifying the repository location in the
 environment variable ``RESTIC_REPOSITORY``. Restic can also read the repository
 location from a file specified via the ``--repository-file`` option or the
-environment variable ``RESTIC_REPOSITORY_FILE``. For the password, several
-options exist:
+environment variable ``RESTIC_REPOSITORY_FILE``.
+
+For automating the supply of the repository password to restic, several options
+exist:
 
  * Setting the environment variable ``RESTIC_PASSWORD``
 
@@ -36,21 +44,24 @@ options exist:
    option ``--password-command`` or the environment variable
    ``RESTIC_PASSWORD_COMMAND``
    
- * The ``init`` command has an option called ``--repository-version`` which can
-   be used to explicitely set the version for the new repository. By default,
-   the current stable version is used. Have a look at the `design documentation
-   <https://github.com/restic/restic/blob/master/doc/design.rst>`__ for
-   details. The alias ``latest`` will always point to the latest repository version.
-   The below table shows which restic version is required to use a certain
-   repository version and shows new features introduced by the repository format.
+The ``init`` command has an option called ``--repository-version`` which can
+be used to explicitly set the version of the new repository. By default, the
+current stable version is used (see table below). The alias ``latest`` will
+always resolve to the latest repository version. Have a look at the `design
+documentation <https://github.com/restic/restic/blob/master/doc/design.rst>`__
+for more details.
 
-+--------------------+------------------------+---------------------+
-| Repository version | Minimum restic version | Major new features  |
-+====================+========================+=====================+
-| ``1``              | any version            |                     |
-+--------------------+------------------------+---------------------+
-| ``2``              | >= 0.14.0              | Compression support |
-+--------------------+------------------------+---------------------+
+The below table shows which restic version is required to use a certain
+repository version, as well as notable features introduced in the various
+versions.
+
++--------------------+-------------------------+---------------------+------------------+
+| Repository version | Required restic version | Major new features  | Comment          |
++====================+=========================+=====================+==================+
+| ``1``              | Any                     |                     |                  |
++--------------------+-------------------------+---------------------+------------------+
+| ``2``              | 0.14.0 or newer         | Compression support | Current default  |
++--------------------+-------------------------+---------------------+------------------+
 
 
 Local
@@ -242,6 +253,9 @@ environment variable ``AWS_DEFAULT_REGION`` or calling restic with an option
 parameter like ``-o s3.region="us-east-1"``. If the region is not specified,
 the default region is used. Afterwards, the S3 server (at least for AWS,
 ``s3.amazonaws.com``) will redirect restic to the correct endpoint.
+
+When using temporary credentials make sure to include the session token via
+then environment variable ``AWS_SESSION_TOKEN``.
 
 Until version 0.8.0, restic used a default prefix of ``restic``, so the files
 in the bucket were placed in a directory named ``restic``. If you want to
