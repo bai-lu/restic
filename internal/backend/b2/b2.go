@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/restic/restic/internal/backend"
+	"github.com/restic/restic/internal/backend/layout"
 	"github.com/restic/restic/internal/backend/sema"
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/errors"
@@ -17,6 +18,7 @@ import (
 
 	"github.com/cenkalti/backoff/v4"
 	"github.com/kurin/blazer/b2"
+	"github.com/kurin/blazer/base"
 )
 
 // b2Backend is a backend which stores its data on Backblaze B2.
@@ -25,8 +27,10 @@ type b2Backend struct {
 	bucket       *b2.Bucket
 	cfg          Config
 	listMaxItems int
-	backend.Layout
+	layout.Layout
 	sem sema.Semaphore
+
+	canDelete bool
 }
 
 // Billing happens in 1000 item granlarity, but we are more interested in reducing the number of network round trips
@@ -97,12 +101,13 @@ func Open(ctx context.Context, cfg Config, rt http.RoundTripper) (restic.Backend
 		client: client,
 		bucket: bucket,
 		cfg:    cfg,
-		Layout: &backend.DefaultLayout{
+		Layout: &layout.DefaultLayout{
 			Join: path.Join,
 			Path: cfg.Prefix,
 		},
 		listMaxItems: defaultListMaxItems,
 		sem:          sem,
+		canDelete:    true,
 	}
 
 	return be, nil
@@ -138,7 +143,7 @@ func Create(ctx context.Context, cfg Config, rt http.RoundTripper) (restic.Backe
 		client: client,
 		bucket: bucket,
 		cfg:    cfg,
-		Layout: &backend.DefaultLayout{
+		Layout: &layout.DefaultLayout{
 			Join: path.Join,
 			Path: cfg.Prefix,
 		},
@@ -146,12 +151,12 @@ func Create(ctx context.Context, cfg Config, rt http.RoundTripper) (restic.Backe
 		sem:          sem,
 	}
 
-	present, err := be.Test(ctx, restic.Handle{Type: restic.ConfigFile})
-	if err != nil {
+	_, err = be.Stat(ctx, restic.Handle{Type: restic.ConfigFile})
+	if err != nil && !be.IsNotExist(err) {
 		return nil, err
 	}
 
-	if present {
+	if err == nil {
 		return nil, errors.New("config already exists")
 	}
 
@@ -184,7 +189,14 @@ func (be *b2Backend) HasAtomicReplace() bool {
 
 // IsNotExist returns true if the error is caused by a non-existing file.
 func (be *b2Backend) IsNotExist(err error) bool {
-	return b2.IsNotExist(errors.Cause(err))
+	// blazer/b2 does not export its error types and values,
+	// so we can't use errors.{As,Is}.
+	for ; err != nil; err = errors.Unwrap(err) {
+		if b2.IsNotExist(err) {
+			return true
+		}
+	}
+	return false
 }
 
 // Load runs fn with a reader that yields the contents of the file at h at the
@@ -279,23 +291,6 @@ func (be *b2Backend) Stat(ctx context.Context, h restic.Handle) (bi restic.FileI
 	return restic.FileInfo{Size: info.Size, Name: h.Name}, nil
 }
 
-// Test returns true if a blob of the given type and name exists in the backend.
-func (be *b2Backend) Test(ctx context.Context, h restic.Handle) (bool, error) {
-	debug.Log("Test %v", h)
-
-	be.sem.GetToken()
-	defer be.sem.ReleaseToken()
-
-	found := false
-	name := be.Filename(h)
-	obj := be.bucket.Object(name)
-	info, err := obj.Attrs(ctx)
-	if err == nil && info != nil && info.Status == b2.Uploaded {
-		found = true
-	}
-	return found, nil
-}
-
 // Remove removes the blob with the given name and type.
 func (be *b2Backend) Remove(ctx context.Context, h restic.Handle) error {
 	debug.Log("Remove %v", h)
@@ -306,11 +301,27 @@ func (be *b2Backend) Remove(ctx context.Context, h restic.Handle) error {
 	// the retry backend will also repeat the remove method up to 10 times
 	for i := 0; i < 3; i++ {
 		obj := be.bucket.Object(be.Filename(h))
-		err := obj.Delete(ctx)
-		if err == nil {
-			// keep deleting until we are sure that no leftover file versions exist
-			continue
+
+		var err error
+		if be.canDelete {
+			err = obj.Delete(ctx)
+			if err == nil {
+				// keep deleting until we are sure that no leftover file versions exist
+				continue
+			}
+
+			code, _ := base.Code(err)
+			if code == 401 { // unauthorized
+				// fallback to hide if not allowed to delete files
+				be.canDelete = false
+				debug.Log("Removing %v failed, falling back to b2_hide_file.", h)
+				continue
+			}
+		} else {
+			// hide adds a new file version hiding all older ones, thus retries are not necessary
+			err = obj.Hide(ctx)
 		}
+
 		// consider a file as removed if b2 informs us that it does not exist
 		if b2.IsNotExist(err) {
 			return nil
@@ -386,7 +397,7 @@ func (be *b2Backend) Delete(ctx context.Context) error {
 		}
 	}
 	err := be.Remove(ctx, restic.Handle{Type: restic.ConfigFile})
-	if err != nil && b2.IsNotExist(errors.Cause(err)) {
+	if err != nil && be.IsNotExist(err) {
 		err = nil
 	}
 

@@ -29,13 +29,13 @@ Exit status is 0 if the command was successful, and non-zero if there was any er
 `,
 	DisableAutoGenTag: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runTag(tagOptions, globalOptions, args)
+		return runTag(cmd.Context(), tagOptions, globalOptions, args)
 	},
 }
 
 // TagOptions bundles all options for the 'tag' command.
 type TagOptions struct {
-	snapshotFilterOptions
+	restic.SnapshotFilter
 	SetTags    restic.TagLists
 	AddTags    restic.TagLists
 	RemoveTags restic.TagLists
@@ -50,7 +50,7 @@ func init() {
 	tagFlags.Var(&tagOptions.SetTags, "set", "`tags` which will replace the existing tags in the format `tag[,tag,...]` (can be given multiple times)")
 	tagFlags.Var(&tagOptions.AddTags, "add", "`tags` which will be added to the existing tags in the format `tag[,tag,...]` (can be given multiple times)")
 	tagFlags.Var(&tagOptions.RemoveTags, "remove", "`tags` which will be removed from the existing tags in the format `tag[,tag,...]` (can be given multiple times)")
-	initMultiSnapshotFilterOptions(tagFlags, &tagOptions.snapshotFilterOptions, true)
+	initMultiSnapshotFilter(tagFlags, &tagOptions.SnapshotFilter, true)
 }
 
 func changeTags(ctx context.Context, repo *repository.Repository, sn *restic.Snapshot, setTags, addTags, removeTags []string) (bool, error) {
@@ -95,7 +95,7 @@ func changeTags(ctx context.Context, repo *repository.Repository, sn *restic.Sna
 	return changed, nil
 }
 
-func runTag(opts TagOptions, gopts GlobalOptions, args []string) error {
+func runTag(ctx context.Context, opts TagOptions, gopts GlobalOptions, args []string) error {
 	if len(opts.SetTags) == 0 && len(opts.AddTags) == 0 && len(opts.RemoveTags) == 0 {
 		return errors.Fatal("nothing to do!")
 	}
@@ -103,14 +103,15 @@ func runTag(opts TagOptions, gopts GlobalOptions, args []string) error {
 		return errors.Fatal("--set and --add/--remove cannot be given at the same time")
 	}
 
-	repo, err := OpenRepository(gopts)
+	repo, err := OpenRepository(ctx, gopts)
 	if err != nil {
 		return err
 	}
 
 	if !gopts.NoLock {
 		Verbosef("create exclusive lock for repository\n")
-		lock, err := lockRepoExclusive(gopts.ctx, repo)
+		var lock *restic.Lock
+		lock, ctx, err = lockRepoExclusive(ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
@@ -118,9 +119,7 @@ func runTag(opts TagOptions, gopts GlobalOptions, args []string) error {
 	}
 
 	changeCnt := 0
-	ctx, cancel := context.WithCancel(gopts.ctx)
-	defer cancel()
-	for sn := range FindFilteredSnapshots(ctx, repo.Backend(), repo, opts.Hosts, opts.Tags, opts.Paths, args) {
+	for sn := range FindFilteredSnapshots(ctx, repo.Backend(), repo, &opts.SnapshotFilter, args) {
 		changed, err := changeTags(ctx, repo, sn, opts.SetTags.Flatten(), opts.AddTags.Flatten(), opts.RemoveTags.Flatten())
 		if err != nil {
 			Warnf("unable to modify the tags for snapshot ID %q, ignoring: %v\n", sn.ID(), err)

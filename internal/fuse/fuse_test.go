@@ -8,6 +8,7 @@ import (
 	"context"
 	"math/rand"
 	"os"
+	"strings"
 	"testing"
 	"time"
 
@@ -15,8 +16,8 @@ import (
 	"github.com/restic/restic/internal/repository"
 	"github.com/restic/restic/internal/restic"
 
-	"bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	"github.com/anacrolix/fuse"
+	"github.com/anacrolix/fuse/fs"
 
 	rtest "github.com/restic/restic/internal/test"
 )
@@ -65,8 +66,7 @@ func loadTree(t testing.TB, repo restic.Repository, id restic.ID) *restic.Tree {
 }
 
 func TestFuseFile(t *testing.T) {
-	repo, cleanup := repository.TestRepository(t)
-	defer cleanup()
+	repo := repository.TestRepository(t)
 
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -118,7 +118,7 @@ func TestFuseFile(t *testing.T) {
 	}
 	root := &Root{repo: repo, blobCache: bloblru.New(blobCacheSize)}
 
-	inode := fs.GenerateDynamicInode(1, "foo")
+	inode := inodeFromNode(1, node)
 	f, err := newFile(root, inode, node)
 	rtest.OK(t, err)
 	of, err := f.Open(context.TODO(), nil, nil)
@@ -148,8 +148,7 @@ func TestFuseFile(t *testing.T) {
 }
 
 func TestFuseDir(t *testing.T) {
-	repo, cleanup := repository.TestRepository(t)
-	defer cleanup()
+	repo := repository.TestRepository(t)
 
 	root := &Root{repo: repo, blobCache: bloblru.New(blobCacheSize)}
 
@@ -161,8 +160,8 @@ func TestFuseDir(t *testing.T) {
 		ChangeTime: time.Unix(1606773732, 0),
 		ModTime:    time.Unix(1606773733, 0),
 	}
-	parentInode := fs.GenerateDynamicInode(0, "parent")
-	inode := fs.GenerateDynamicInode(1, "foo")
+	parentInode := inodeFromName(0, "parent")
+	inode := inodeFromName(1, "foo")
 	d, err := newDir(root, inode, parentInode, node)
 	rtest.OK(t, err)
 
@@ -180,9 +179,7 @@ func TestFuseDir(t *testing.T) {
 
 // Test top-level directories for their UID and GID.
 func TestTopUIDGID(t *testing.T) {
-	repo, cleanup := repository.TestRepository(t)
-	defer cleanup()
-
+	repo := repository.TestRepository(t)
 	restic.TestCreateSnapshot(t, repo, time.Unix(1460289341, 207401672), 0, 0)
 
 	testTopUIDGID(t, Config{}, repo, uint32(os.Getuid()), uint32(os.Getgid()))
@@ -218,4 +215,72 @@ func testTopUIDGID(t *testing.T, cfg Config, repo restic.Repository, uid, gid ui
 	rtest.OK(t, err)
 	rtest.Equals(t, uint32(0), attr.Uid)
 	rtest.Equals(t, uint32(0), attr.Gid)
+}
+
+// Test reporting of fuse.Attr.Blocks in multiples of 512.
+func TestBlocks(t *testing.T) {
+	root := &Root{}
+
+	for _, c := range []struct {
+		size, blocks uint64
+	}{
+		{0, 0},
+		{1, 1},
+		{511, 1},
+		{512, 1},
+		{513, 2},
+		{1024, 2},
+		{1025, 3},
+		{41253, 81},
+	} {
+		target := strings.Repeat("x", int(c.size))
+
+		for _, n := range []fs.Node{
+			&file{root: root, node: &restic.Node{Size: uint64(c.size)}},
+			&link{root: root, node: &restic.Node{LinkTarget: target}},
+			&snapshotLink{root: root, snapshot: &restic.Snapshot{}, target: target},
+		} {
+			var a fuse.Attr
+			err := n.Attr(context.TODO(), &a)
+			rtest.OK(t, err)
+			rtest.Equals(t, c.blocks, a.Blocks)
+		}
+	}
+}
+
+func TestInodeFromNode(t *testing.T) {
+	node := &restic.Node{Name: "foo.txt", Type: "chardev", Links: 2}
+	ino1 := inodeFromNode(1, node)
+	ino2 := inodeFromNode(2, node)
+	rtest.Assert(t, ino1 == ino2, "inodes %d, %d of hard links differ", ino1, ino2)
+
+	node.Links = 1
+	ino1 = inodeFromNode(1, node)
+	ino2 = inodeFromNode(2, node)
+	rtest.Assert(t, ino1 != ino2, "same inode %d but different parent", ino1)
+}
+
+var sink uint64
+
+func BenchmarkInode(b *testing.B) {
+	for _, sub := range []struct {
+		name string
+		node restic.Node
+	}{
+		{
+			name: "no_hard_links",
+			node: restic.Node{Name: "a somewhat long-ish filename.svg.bz2", Type: "fifo"},
+		},
+		{
+			name: "hard_link",
+			node: restic.Node{Name: "some other filename", Type: "file", Links: 2},
+		},
+	} {
+		b.Run(sub.name, func(b *testing.B) {
+			b.ReportAllocs()
+			for i := 0; i < b.N; i++ {
+				sink = inodeFromNode(1, &sub.node)
+			}
+		})
+	}
 }

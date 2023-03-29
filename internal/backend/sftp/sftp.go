@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/restic/restic/internal/backend"
+	"github.com/restic/restic/internal/backend/layout"
 	"github.com/restic/restic/internal/backend/sema"
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/errors"
@@ -35,7 +36,7 @@ type SFTP struct {
 	posixRename bool
 
 	sem sema.Semaphore
-	backend.Layout
+	layout.Layout
 	Config
 	backend.Modes
 }
@@ -80,7 +81,10 @@ func startClient(cfg Config) (*SFTP, error) {
 
 	bg, err := backend.StartForeground(cmd)
 	if err != nil {
-		return nil, errors.Wrap(err, "cmd.Start")
+		if backend.IsErrDot(err) {
+			return nil, errors.Errorf("cannot implicitly run relative executable %v found in current directory, use -o sftp.command=./<command> to override", cmd.Path)
+		}
+		return nil, err
 	}
 
 	// wait in a different goroutine
@@ -141,14 +145,14 @@ func open(ctx context.Context, sftp *SFTP, cfg Config) (*SFTP, error) {
 		return nil, err
 	}
 
-	sftp.Layout, err = backend.ParseLayout(ctx, sftp, cfg.Layout, defaultLayout, cfg.Path)
+	sftp.Layout, err = layout.ParseLayout(ctx, sftp, cfg.Layout, defaultLayout, cfg.Path)
 	if err != nil {
 		return nil, err
 	}
 
 	debug.Log("layout: %v\n", sftp.Layout)
 
-	fi, err := sftp.c.Stat(Join(cfg.Path, backend.Paths.Config))
+	fi, err := sftp.c.Stat(sftp.Layout.Filename(restic.Handle{Type: restic.ConfigFile}))
 	m := backend.DeriveModesFromFileInfo(fi, err)
 	debug.Log("using (%03O file, %03O dir) permissions", m.File, m.Dir)
 
@@ -240,7 +244,7 @@ func Create(ctx context.Context, cfg Config) (*SFTP, error) {
 		return nil, err
 	}
 
-	sftp.Layout, err = backend.ParseLayout(ctx, sftp, cfg.Layout, defaultLayout, cfg.Path)
+	sftp.Layout, err = layout.ParseLayout(ctx, sftp, cfg.Layout, defaultLayout, cfg.Path)
 	if err != nil {
 		return nil, err
 	}
@@ -248,7 +252,7 @@ func Create(ctx context.Context, cfg Config) (*SFTP, error) {
 	sftp.Modes = backend.DefaultModes
 
 	// test if config file already exists
-	_, err = sftp.c.Lstat(Join(cfg.Path, backend.Paths.Config))
+	_, err = sftp.c.Lstat(sftp.Layout.Filename(restic.Handle{Type: restic.ConfigFile}))
 	if err == nil {
 		return nil, errors.New("config file already exists")
 	}
@@ -350,14 +354,13 @@ func (r *SFTP) Save(ctx context.Context, h restic.Handle, rd restic.RewindReader
 			debug.Log("sftp: failed to remove broken file %v: %v",
 				f.Name(), rmErr)
 		}
-
-		err = r.checkNoSpace(dirname, rd.Length(), err)
 	}()
 
 	// save data, make sure to use the optimized sftp upload method
 	wbytes, err := f.ReadFrom(rd)
 	if err != nil {
 		_ = f.Close()
+		err = r.checkNoSpace(dirname, rd.Length(), err)
 		return errors.Wrap(err, "Write")
 	}
 
@@ -399,7 +402,7 @@ func (r *SFTP) checkNoSpace(dir string, size int64, origErr error) error {
 		debug.Log("sftp: StatVFS returned %v", err)
 		return origErr
 	}
-	if fsinfo.Favail == 0 || fsinfo.FreeSpace() < uint64(size) {
+	if fsinfo.Favail == 0 || fsinfo.Frsize*fsinfo.Bavail < uint64(size) {
 		err := errors.New("sftp: no space left on device")
 		return backoff.Permanent(err)
 	}
@@ -489,28 +492,6 @@ func (r *SFTP) Stat(ctx context.Context, h restic.Handle) (restic.FileInfo, erro
 	}
 
 	return restic.FileInfo{Size: fi.Size(), Name: h.Name}, nil
-}
-
-// Test returns true if a blob of the given type and name exists in the backend.
-func (r *SFTP) Test(ctx context.Context, h restic.Handle) (bool, error) {
-	debug.Log("Test(%v)", h)
-	if err := r.clientError(); err != nil {
-		return false, err
-	}
-
-	r.sem.GetToken()
-	defer r.sem.ReleaseToken()
-
-	_, err := r.c.Lstat(r.Filename(h))
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-
-	if err != nil {
-		return false, errors.Wrap(err, "Lstat")
-	}
-
-	return true, nil
 }
 
 // Remove removes the content stored at name.

@@ -4,6 +4,7 @@
 package main
 
 import (
+	"context"
 	"os"
 	"strings"
 	"time"
@@ -12,12 +13,13 @@ import (
 
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/errors"
+	"github.com/restic/restic/internal/restic"
 
 	resticfs "github.com/restic/restic/internal/fs"
 	"github.com/restic/restic/internal/fuse"
 
-	systemFuse "bazil.org/fuse"
-	"bazil.org/fuse/fs"
+	systemFuse "github.com/anacrolix/fuse"
+	"github.com/anacrolix/fuse/fs"
 )
 
 var cmdMount = &cobra.Command{
@@ -66,7 +68,7 @@ Exit status is 0 if the command was successful, and non-zero if there was any er
 `,
 	DisableAutoGenTag: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runMount(mountOptions, globalOptions, args)
+		return runMount(cmd.Context(), mountOptions, globalOptions, args)
 	},
 }
 
@@ -75,7 +77,7 @@ type MountOptions struct {
 	OwnerRoot            bool
 	AllowOther           bool
 	NoDefaultPermissions bool
-	snapshotFilterOptions
+	restic.SnapshotFilter
 	TimeTemplate  string
 	PathTemplates []string
 }
@@ -90,7 +92,7 @@ func init() {
 	mountFlags.BoolVar(&mountOptions.AllowOther, "allow-other", false, "allow other users to access the data in the mounted directory")
 	mountFlags.BoolVar(&mountOptions.NoDefaultPermissions, "no-default-permissions", false, "for 'allow-other', ignore Unix permissions and allow users to read all snapshot files")
 
-	initMultiSnapshotFilterOptions(mountFlags, &mountOptions.snapshotFilterOptions, true)
+	initMultiSnapshotFilter(mountFlags, &mountOptions.SnapshotFilter, true)
 
 	mountFlags.StringArrayVar(&mountOptions.PathTemplates, "path-template", nil, "set `template` for path names (can be specified multiple times)")
 	mountFlags.StringVar(&mountOptions.TimeTemplate, "snapshot-template", time.RFC3339, "set `template` to use for snapshot dirs")
@@ -98,7 +100,7 @@ func init() {
 	_ = mountFlags.MarkDeprecated("snapshot-template", "use --time-template")
 }
 
-func runMount(opts MountOptions, gopts GlobalOptions, args []string) error {
+func runMount(ctx context.Context, opts MountOptions, gopts GlobalOptions, args []string) error {
 	if opts.TimeTemplate == "" {
 		return errors.Fatal("time template string cannot be empty")
 	}
@@ -114,20 +116,21 @@ func runMount(opts MountOptions, gopts GlobalOptions, args []string) error {
 	debug.Log("start mount")
 	defer debug.Log("finish mount")
 
-	repo, err := OpenRepository(gopts)
+	repo, err := OpenRepository(ctx, gopts)
 	if err != nil {
 		return err
 	}
 
 	if !gopts.NoLock {
-		lock, err := lockRepo(gopts.ctx, repo)
+		var lock *restic.Lock
+		lock, ctx, err = lockRepo(ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
 		}
 	}
 
-	err = repo.LoadIndex(gopts.ctx)
+	err = repo.LoadIndex(ctx)
 	if err != nil {
 		return err
 	}
@@ -177,9 +180,7 @@ func runMount(opts MountOptions, gopts GlobalOptions, args []string) error {
 
 	cfg := fuse.Config{
 		OwnerIsRoot:   opts.OwnerRoot,
-		Hosts:         opts.Hosts,
-		Tags:          opts.Tags,
-		Paths:         opts.Paths,
+		Filter:        opts.SnapshotFilter,
 		TimeTemplate:  opts.TimeTemplate,
 		PathTemplates: opts.PathTemplates,
 	}

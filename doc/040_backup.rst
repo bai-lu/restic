@@ -139,12 +139,23 @@ File change detection
 *********************
 
 When restic encounters a file that has already been backed up, whether in the
-current backup or a previous one, it makes sure the file's contents are only
+current backup or a previous one, it makes sure the file's content is only
 stored once in the repository. To do so, it normally has to scan the entire
-contents of every file. Because this can be very expensive, restic also uses a
+content of the file. Because this can be very expensive, restic also uses a
 change detection rule based on file metadata to determine whether a file is
 likely unchanged since a previous backup. If it is, the file is not scanned
 again.
+
+The previous backup snapshot, called "parent" snaphot in restic terminology,
+is determined as follows. By default restic groups snapshots by hostname and
+backup paths, and then selects the latest snapshot in the group that matches
+the current backup. You can change the selection criteria using the
+``--group-by`` option, which defaults to ``host,paths``. To select the latest
+snapshot with the same paths independent of the hostname, use ``paths``. Or,
+to only consider the hostname and tags, use ``host,tags``. Alternatively, it
+is possible to manually specify a specific parent snapshot using the
+``--parent`` option. Finally, note that one would normally set the
+``--group-by`` option for the ``forget`` command to the same value.
 
 Change detection is only performed for regular files (not special files,
 symlinks or directories) that have the exact same path as they did in a
@@ -204,6 +215,8 @@ Combined with ``--verbose``, you can see a list of changes:
     modified  /archive.tar.gz, saved in 0.140s (25.542 MiB added)
     Would be added to the repository: 25.551 MiB
 
+.. _backup-excluding-files:
+
 Excluding Files
 ***************
 
@@ -241,14 +254,14 @@ This instructs restic to exclude files matching the following criteria:
  * All files matching ``*.go`` (second line in ``excludes.txt``)
  * All files and sub-directories named ``bar`` which reside somewhere below a directory called ``foo`` (fourth line in ``excludes.txt``)
 
-Patterns use `filepath.Glob <https://golang.org/pkg/path/filepath/#Glob>`__ internally,
-see `filepath.Match <https://golang.org/pkg/path/filepath/#Match>`__ for
-syntax. Patterns are tested against the full path of a file/dir to be saved,
+Patterns use the syntax of the Go function
+`filepath.Match <https://pkg.go.dev/path/filepath#Match>`__
+and are tested against the full path of a file/dir to be saved,
 even if restic is passed a relative path to save. Empty lines and lines
 starting with a ``#`` are ignored.
 
 Environment variables in exclude files are expanded with `os.ExpandEnv
-<https://golang.org/pkg/os/#ExpandEnv>`__, so ``/home/$USER/foo`` will be
+<https://pkg.go.dev/os#ExpandEnv>`__, so ``/home/$USER/foo`` will be
 expanded to ``/home/bob/foo`` for the user ``bob``. To get a literal dollar
 sign, write ``$$`` to the file - this has to be done even when there's no
 matching environment variable for the word following a single ``$``. Note
@@ -299,7 +312,7 @@ directory, then selectively add back some of them.
 
 ::
 
-    $HOME/**/*
+    $HOME/*
     !$HOME/Documents
     !$HOME/code
     !$HOME/.emacs.d
@@ -368,7 +381,7 @@ contains one *pattern* per line. The file must be encoded as UTF-8, or UTF-16
 with a byte-order mark. Leading and trailing whitespace is removed from the
 patterns. Empty lines and lines starting with a ``#`` are ignored and each
 pattern is expanded when read, such that special characters in it are expanded
-using the Go function `filepath.Glob <https://golang.org/pkg/path/filepath/#Glob>`__
+using the Go function `filepath.Glob <https://pkg.go.dev/path/filepath#Glob>`__
 - please see its documentation for the syntax you can use in the patterns.
 
 The argument passed to ``--files-from-verbatim`` must be the name of a text file
@@ -555,6 +568,7 @@ environment variables. The following lists these environment variables:
     RESTIC_COMPRESSION                  Compression mode (only available for repository format version 2)
     RESTIC_PROGRESS_FPS                 Frames per second by which the progress bar is updated
     RESTIC_PACK_SIZE                    Target size for pack files
+    RESTIC_READ_CONCURRENCY             Concurrency for file reads
 
     TMPDIR                              Location for temporary files
 

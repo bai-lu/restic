@@ -10,15 +10,13 @@ import (
 	"github.com/restic/restic/internal/debug"
 	"github.com/restic/restic/internal/restic"
 
-	"bazil.org/fuse/fs"
+	"github.com/anacrolix/fuse/fs"
 )
 
 // Config holds settings for the fuse mount.
 type Config struct {
 	OwnerIsRoot   bool
-	Hosts         []string
-	Tags          []restic.TagList
-	Paths         []string
+	Filter        restic.SnapshotFilter
 	TimeTemplate  string
 	PathTemplates []string
 }

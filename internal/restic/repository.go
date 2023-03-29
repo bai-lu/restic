@@ -4,9 +4,13 @@ import (
 	"context"
 
 	"github.com/restic/restic/internal/crypto"
+	"github.com/restic/restic/internal/errors"
 	"github.com/restic/restic/internal/ui/progress"
 	"golang.org/x/sync/errgroup"
 )
+
+// ErrInvalidData is used to report that a file is corrupted
+var ErrInvalidData = errors.New("invalid data returned")
 
 // Repository stores data in a backend. It provides high-level functions and
 // transparently encrypts/decrypts data.
@@ -47,10 +51,8 @@ type Repository interface {
 	StartPackUploader(ctx context.Context, wg *errgroup.Group)
 	Flush(context.Context) error
 
-	// LoadUnpacked loads and decrypts the file with the given type and ID,
-	// using the supplied buffer (which must be empty). If the buffer is nil, a
-	// new buffer will be allocated and returned.
-	LoadUnpacked(ctx context.Context, t FileType, id ID, buf []byte) (data []byte, err error)
+	// LoadUnpacked loads and decrypts the file with the given type and ID.
+	LoadUnpacked(ctx context.Context, t FileType, id ID) (data []byte, err error)
 	SaveUnpacked(context.Context, FileType, []byte) (ID, error)
 }
 
@@ -63,7 +65,7 @@ type Lister interface {
 type LoaderUnpacked interface {
 	// Connections returns the maximum number of concurrent backend operations
 	Connections() uint
-	LoadUnpacked(ctx context.Context, t FileType, id ID, buf []byte) (data []byte, err error)
+	LoadUnpacked(ctx context.Context, t FileType, id ID) (data []byte, err error)
 }
 
 // SaverUnpacked allows saving a blob not stored in a pack file
@@ -83,10 +85,9 @@ type MasterIndex interface {
 	Has(BlobHandle) bool
 	Lookup(BlobHandle) []PackedBlob
 
-	// Each returns a channel that yields all blobs known to the index. When
-	// the context is cancelled, the background goroutine terminates. This
-	// blocks any modification of the index.
-	Each(ctx context.Context) <-chan PackedBlob
+	// Each runs fn on all blobs known to the index. When the context is cancelled,
+	// the index iteration return immediately. This blocks any modification of the index.
+	Each(ctx context.Context, fn func(PackedBlob))
 	ListPacks(ctx context.Context, packs IDSet) <-chan PackBlobs
 
 	Save(ctx context.Context, repo SaverUnpacked, packBlacklist IDSet, extraObsolete IDs, p *progress.Counter) (obsolete IDSet, err error)

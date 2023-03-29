@@ -38,7 +38,7 @@ Exit status is 0 if the command was successful, and non-zero if there was any er
 `,
 	DisableAutoGenTag: true,
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return runFind(findOptions, globalOptions, args)
+		return runFind(cmd.Context(), findOptions, globalOptions, args)
 	},
 }
 
@@ -51,7 +51,7 @@ type FindOptions struct {
 	PackID, ShowPackID bool
 	CaseInsensitive    bool
 	ListLong           bool
-	snapshotFilterOptions
+	restic.SnapshotFilter
 }
 
 var findOptions FindOptions
@@ -70,7 +70,7 @@ func init() {
 	f.BoolVarP(&findOptions.CaseInsensitive, "ignore-case", "i", false, "ignore case for pattern")
 	f.BoolVarP(&findOptions.ListLong, "long", "l", false, "use a long listing format showing size and mode")
 
-	initMultiSnapshotFilterOptions(f, &findOptions.snapshotFilterOptions, true)
+	initMultiSnapshotFilter(f, &findOptions.SnapshotFilter, true)
 }
 
 type findPattern struct {
@@ -467,7 +467,7 @@ func (f *Finder) indexPacksToBlobs(ctx context.Context, packIDs map[string]struc
 
 	// remember which packs were found in the index
 	indexPackIDs := make(map[string]struct{})
-	for pb := range f.repo.Index().Each(wctx) {
+	f.repo.Index().Each(wctx, func(pb restic.PackedBlob) {
 		idStr := pb.PackID.String()
 		// keep entry in packIDs as Each() returns individual index entries
 		matchingID := false
@@ -485,7 +485,7 @@ func (f *Finder) indexPacksToBlobs(ctx context.Context, packIDs map[string]struc
 			f.blobIDs[pb.ID.String()] = struct{}{}
 			indexPackIDs[idStr] = struct{}{}
 		}
-	}
+	})
 
 	for id := range indexPackIDs {
 		delete(packIDs, id)
@@ -534,7 +534,7 @@ func (f *Finder) findObjectsPacks(ctx context.Context) {
 	}
 }
 
-func runFind(opts FindOptions, gopts GlobalOptions, args []string) error {
+func runFind(ctx context.Context, opts FindOptions, gopts GlobalOptions, args []string) error {
 	if len(args) == 0 {
 		return errors.Fatal("wrong number of arguments")
 	}
@@ -568,30 +568,28 @@ func runFind(opts FindOptions, gopts GlobalOptions, args []string) error {
 		return errors.Fatal("cannot have several ID types")
 	}
 
-	repo, err := OpenRepository(gopts)
+	repo, err := OpenRepository(ctx, gopts)
 	if err != nil {
 		return err
 	}
 
 	if !gopts.NoLock {
-		lock, err := lockRepo(gopts.ctx, repo)
+		var lock *restic.Lock
+		lock, ctx, err = lockRepo(ctx, repo)
 		defer unlockRepo(lock)
 		if err != nil {
 			return err
 		}
 	}
 
-	snapshotLister, err := backend.MemorizeList(gopts.ctx, repo.Backend(), restic.SnapshotFile)
+	snapshotLister, err := backend.MemorizeList(ctx, repo.Backend(), restic.SnapshotFile)
 	if err != nil {
 		return err
 	}
 
-	if err = repo.LoadIndex(gopts.ctx); err != nil {
+	if err = repo.LoadIndex(ctx); err != nil {
 		return err
 	}
-
-	ctx, cancel := context.WithCancel(gopts.ctx)
-	defer cancel()
 
 	f := &Finder{
 		repo:        repo,
@@ -620,7 +618,7 @@ func runFind(opts FindOptions, gopts GlobalOptions, args []string) error {
 		}
 	}
 
-	for sn := range FindFilteredSnapshots(ctx, snapshotLister, repo, opts.Hosts, opts.Tags, opts.Paths, opts.Snapshots) {
+	for sn := range FindFilteredSnapshots(ctx, snapshotLister, repo, &opts.SnapshotFilter, opts.Snapshots) {
 		if f.blobIDs != nil || f.treeIDs != nil {
 			if err = f.findIDs(ctx, sn); err != nil && err.Error() != "OK" {
 				return err

@@ -6,6 +6,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/restic/restic/internal/index"
 	"github.com/restic/restic/internal/repository"
 	"github.com/restic/restic/internal/restic"
 	rtest "github.com/restic/restic/internal/test"
@@ -170,7 +171,7 @@ func flush(t *testing.T, repo restic.Repository) {
 }
 
 func rebuildIndex(t *testing.T, repo restic.Repository) {
-	err := repo.SetIndex(repository.NewMasterIndex())
+	err := repo.SetIndex(index.NewMasterIndex())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -207,7 +208,7 @@ func rebuildIndex(t *testing.T, repo restic.Repository) {
 }
 
 func reloadIndex(t *testing.T, repo restic.Repository) {
-	err := repo.SetIndex(repository.NewMasterIndex())
+	err := repo.SetIndex(index.NewMasterIndex())
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -222,8 +223,7 @@ func TestRepack(t *testing.T) {
 }
 
 func testRepack(t *testing.T, version uint) {
-	repo, cleanup := repository.TestRepositoryWithVersion(t, version)
-	defer cleanup()
+	repo := repository.TestRepositoryWithVersion(t, version)
 
 	seed := time.Now().UnixNano()
 	rand.Seed(seed)
@@ -301,10 +301,8 @@ func (r oneConnectionRepo) Connections() uint {
 }
 
 func testRepackCopy(t *testing.T, version uint) {
-	repo, cleanup := repository.TestRepositoryWithVersion(t, version)
-	defer cleanup()
-	dstRepo, dstCleanup := repository.TestRepositoryWithVersion(t, version)
-	defer dstCleanup()
+	repo := repository.TestRepositoryWithVersion(t, version)
+	dstRepo := repository.TestRepositoryWithVersion(t, version)
 
 	// test with minimal possible connection count
 	repoWrapped := &oneConnectionRepo{repo}
@@ -348,8 +346,7 @@ func TestRepackWrongBlob(t *testing.T) {
 }
 
 func testRepackWrongBlob(t *testing.T, version uint) {
-	repo, cleanup := repository.TestRepositoryWithVersion(t, version)
-	defer cleanup()
+	repo := repository.TestRepositoryWithVersion(t, version)
 
 	seed := time.Now().UnixNano()
 	rand.Seed(seed)
@@ -374,8 +371,7 @@ func TestRepackBlobFallback(t *testing.T) {
 }
 
 func testRepackBlobFallback(t *testing.T, version uint) {
-	repo, cleanup := repository.TestRepositoryWithVersion(t, version)
-	defer cleanup()
+	repo := repository.TestRepositoryWithVersion(t, version)
 
 	seed := time.Now().UnixNano()
 	rand.Seed(seed)
